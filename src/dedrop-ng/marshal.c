@@ -13,8 +13,6 @@
 #include "code.h"
 #include "marshal.h"
 #include "hashtable.h"
-
-// debug
 #include <stddef.h>
 
 /*[clinic input]
@@ -23,8 +21,6 @@ module marshal
 /*[clinic end generated code: output=da39a3ee5e6b4b0d input=c982b7930dee17db]*/
 
 #include "marshal.c.h"
-
-#include "map.h"
 
 /* High water mark to determine when the marshalled object is dangerously deep
  * and risks coring the interpreter.  When the object stack gets this deep,
@@ -271,6 +267,32 @@ w_PyLong(const PyLongObject *ob, char flag, WFILE *p)
     } while (d != 0);
 }
 
+static void
+w_float_bin(double v, WFILE *p)
+{
+    unsigned char buf[8];
+    if (_PyFloat_Pack8(v, buf, 1) < 0) {
+        p->error = WFERR_UNMARSHALLABLE;
+        return;
+    }
+    w_string((const char *)buf, 8, p);
+}
+
+static void
+w_float_str(double v, WFILE *p)
+{
+    int n;
+    char *buf = PyOS_double_to_string(v, 'g', 17, 0, NULL);
+    if (!buf) {
+        p->error = WFERR_NOMEMORY;
+        return;
+    }
+    n = (int)strlen(buf);
+    w_byte(n, p);
+    w_string(buf, n, p);
+    PyMem_Free(buf);
+}
+
 static int
 w_ref(PyObject *v, char *flag, WFILE *p)
 {
@@ -317,120 +339,10 @@ err:
 static void
 w_complex_object(PyObject *v, char flag, WFILE *p);
 
-/* Bytecode object - Modified by Dropbox 62.4.103 (Decompile PyCode_CheckLineNumber function to get to this PyCodeObject structure)
- *
- * 00000000 PyCodeObject    struc ; (sizeof=0x90, align=0x8, copyof_175)
- * 00000000 ob_base         PyObject ?
- * 00000010 co_argcount     dd ?
- * 00000014 co_kwonlyargcount dd ?
- * 00000018 co_nlocals      dd ?
- * 0000001C co_stacksize    dd ?
- * 00000020 co_flags        dd ?
- * 00000024                 db ? ; undefined
- * 00000025                 db ? ; undefined
- * 00000026                 db ? ; undefined
- * 00000027                 db ? ; undefined
- * 00000028 co_consts       dq ?                    ; offset
- * 00000030 co_names        dq ?                    ; offset
- * 00000038 co_varnames     dq ?                    ; offset
- * 00000040 co_freevars     dq ?                    ; offset
- * 00000048 co_cellvars     dq ?                    ; offset
- * 00000050 co_cell2arg     dq ?                    ; offset
- * 00000058 co_code         dq ?                    ; offset
- * 00000060 co_filename     dq ?                    ; offset
- * 00000068 co_name         dq ?                    ; offset
- * 00000070 co_firstlineno  dd ?
- * 00000074                 db ? ; undefined
- * 00000075                 db ? ; undefined
- * 00000076                 db ? ; undefined
- * 00000077                 db ? ; undefined
- * 00000078 co_lnotab       dq ?                    ; offset
- * 00000080 co_zombieframe  dq ?                    ; offset
- * 00000088 co_weakreflist  dq ?                    ; offset
- * 00000090 PyCodeObject    ends
- * 00000090
-
-typedef struct {
-    PyObject_HEAD
-    int co_argcount;            // #arguments, except *args
-    int co_kwonlyargcount;      // #keyword only arguments
-    int co_nlocals;             // #local variables
-    int co_stacksize;           // #entries needed for evaluation stack
-    int co_flags;               // CO_..., see below
-    int filler1;
-    PyObject *co_consts;        // list (constants used)
-    PyObject *co_names;         // list of strings (names used)
-    PyObject *co_varnames;      // tuple of strings (local variable names)
-    PyObject *co_freevars;      // tuple of strings (free variable names)
-    PyObject *co_cellvars;      // tuple of strings (cell variable names)
-    unsigned char *co_cell2arg; // Maps cell vars which are arguments.
-    PyObject *co_code;          // instruction opcodes
-    PyObject *co_filename;      // unicode (where it was loaded from)
-    PyObject *co_name;          // unicode (name, for reference)
-    int co_firstlineno;         // first source line number
-    int filler2;
-    PyObject *co_lnotab;        // string (encoding addr<->lineno mapping) See
-                                   Objects/lnotab_notes.txt for details.
-    void *co_zombieframe;     // for optimization only (see frameobject.c)
-    PyObject *co_weakreflist;   // to support weakrefs to code objects
-} PyCodeObjectNew;
-*/
-
-/* Bytecode object - Modified by Dropbox 72.4.136 (Decompile PyCode_CheckLineNumber function to get to this PyCodeObject structure)
- *
- * 00000000 PyCodeObject    struc ; (sizeof=0x90, align=0x8, copyof_175)
- * 00000000 ob_base         PyObject ?
- * 00000010 co_argcount     dd ?
- * 00000014 co_kwonlyargcount dd ?
- * 00000018 co_nlocals      dd ?
- * 0000001C co_stacksize    dd ?
- * 00000020 co_flags        dd ?
- * 00000024 co_firstlineno  dd ?
- * 00000028 co_consts       dq ?                    ; offset
- * 00000030 co_names        dq ?                    ; offset
- * 00000038 co_varnames     dq ?                    ; offset
- * 00000040 co_freevars     dq ?                    ; offset
- * 00000048 co_cellvars     dq ?                    ; offset
- * 00000050 co_cell2arg     dq ?                    ; offset
- * 00000058 co_code         dq ?                    ; offset
- * 00000060 co_filename     dq ?                    ; offset
- * 00000068 co_name         dq ?                    ; offset
- * 00000070 co_lnotab       dq ?
- * 00000078 co_zombieframe  dq ?                    ; offset
- * 00000080 co_weakreflist  dq ?                    ; offset
- * 00000088 co_extra        dq ?                    ; offset
- * 00000090 PyCodeObject    ends
- * 00000090
- */
-
-typedef struct {
-    PyObject_HEAD
-    int co_argcount;            // #arguments, except *args
-    int co_kwonlyargcount;      // #keyword only arguments
-    int co_nlocals;             // #local variables
-    int co_stacksize;           // #entries needed for evaluation stack
-    int co_flags;               // CO_..., see below
-    int co_firstlineno;
-    PyObject *co_consts;        // list (constants used)
-    PyObject *co_names;         // list of strings (names used)
-    PyObject *co_varnames;      // tuple of strings (local variable names)
-    PyObject *co_freevars;      // tuple of strings (free variable names)
-    PyObject *co_cellvars;      // tuple of strings (cell variable names)
-    Py_ssize_t *co_cell2arg; // Maps cell vars which are arguments.
-    PyObject *co_code;          // instruction opcodes
-    PyObject *co_filename;      // unicode (where it was loaded from)
-    PyObject *co_name;          // unicode (name, for reference)
-    PyObject *co_lnotab;        // string (encoding addr<->lineno mapping) See
-    void *co_zombieframe;       // for optimization only (see frameobject.c)
-    PyObject *co_weakreflist;   // to support weakrefs to code objects
-    void *co_extra;
-} PyCodeObjectNew;
-
-
 static void
 w_object(PyObject *v, WFILE *p)
 {
-    // puts("<<< In w_object >>>");
+    //puts(">>> w_object");
     char flag = '\0';
 
     p->depth++;
@@ -462,6 +374,30 @@ w_object(PyObject *v, WFILE *p)
     p->depth--;
 }
 
+typedef struct {
+    PyObject_HEAD
+    int co_argcount;            // #arguments, except *args
+    int co_posonlyargcount;     // #positional only arguments
+    int co_kwonlyargcount;      // #keyword only arguments
+    int co_nlocals;             // #local variables
+    int co_stacksize;           // #entries needed for evaluation stack
+    int co_flags;               // CO_..., see below
+    int co_firstlineno;
+    PyObject *co_consts;        // list (constants used)
+    PyObject *co_names;         // list of strings (names used)
+    PyObject *co_varnames;      // tuple of strings (local variable names)
+    PyObject *co_freevars;      // tuple of strings (free variable names)
+    PyObject *co_cellvars;      // tuple of strings (cell variable names)
+    Py_ssize_t *co_cell2arg; // Maps cell vars which are arguments.
+    PyObject *co_code;          // instruction opcodes
+    PyObject *co_filename;      // unicode (where it was loaded from)
+    PyObject *co_name;          // unicode (name, for reference)
+    PyObject *co_lnotab;        // string (encoding addr<->lineno mapping) See
+    void *co_zombieframe;       // for optimization only (see frameobject.c)
+    PyObject *co_weakreflist;   // to support weakrefs to code objects
+    void *co_extra;
+} PyCodeObjectNew;
+
 static void
 w_complex_object(PyObject *v, char flag, WFILE *p)
 {
@@ -491,69 +427,24 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
     }
     else if (PyFloat_CheckExact(v)) {
         if (p->version > 1) {
-            unsigned char buf[8];
-            if (_PyFloat_Pack8(PyFloat_AsDouble(v),
-                               buf, 1) < 0) {
-                p->error = WFERR_UNMARSHALLABLE;
-                return;
-            }
             W_TYPE(TYPE_BINARY_FLOAT, p);
-            w_string((char*)buf, 8, p);
+            w_float_bin(PyFloat_AS_DOUBLE(v), p);
         }
         else {
-            char *buf = PyOS_double_to_string(PyFloat_AS_DOUBLE(v),
-                                              'g', 17, 0, NULL);
-            if (!buf) {
-                p->error = WFERR_NOMEMORY;
-                return;
-            }
-            n = strlen(buf);
             W_TYPE(TYPE_FLOAT, p);
-            w_byte((int)n, p);
-            w_string(buf, n, p);
-            PyMem_Free(buf);
+            w_float_str(PyFloat_AS_DOUBLE(v), p);
         }
     }
     else if (PyComplex_CheckExact(v)) {
         if (p->version > 1) {
-            unsigned char buf[8];
-            if (_PyFloat_Pack8(PyComplex_RealAsDouble(v),
-                               buf, 1) < 0) {
-                p->error = WFERR_UNMARSHALLABLE;
-                return;
-            }
             W_TYPE(TYPE_BINARY_COMPLEX, p);
-            w_string((char*)buf, 8, p);
-            if (_PyFloat_Pack8(PyComplex_ImagAsDouble(v),
-                               buf, 1) < 0) {
-                p->error = WFERR_UNMARSHALLABLE;
-                return;
-            }
-            w_string((char*)buf, 8, p);
+            w_float_bin(PyComplex_RealAsDouble(v), p);
+            w_float_bin(PyComplex_ImagAsDouble(v), p);
         }
         else {
-            char *buf;
             W_TYPE(TYPE_COMPLEX, p);
-            buf = PyOS_double_to_string(PyComplex_RealAsDouble(v),
-                                        'g', 17, 0, NULL);
-            if (!buf) {
-                p->error = WFERR_NOMEMORY;
-                return;
-            }
-            n = strlen(buf);
-            w_byte((int)n, p);
-            w_string(buf, n, p);
-            PyMem_Free(buf);
-            buf = PyOS_double_to_string(PyComplex_ImagAsDouble(v),
-                                        'g', 17, 0, NULL);
-            if (!buf) {
-                p->error = WFERR_NOMEMORY;
-                return;
-            }
-            n = strlen(buf);
-            w_byte((int)n, p);
-            w_string(buf, n, p);
-            PyMem_Free(buf);
+            w_float_str(PyComplex_RealAsDouble(v), p);
+            w_float_str(PyComplex_ImagAsDouble(v), p);
         }
     }
     else if (PyBytes_CheckExact(v)) {
@@ -663,42 +554,18 @@ w_complex_object(PyObject *v, char flag, WFILE *p)
     }
     else if (PyCode_Check(v)) {
         PyCodeObjectNew *co = (PyCodeObjectNew *)v;
-        // unsigned char opcode_map[255] = { 59, 79, 72, 62, 255, 68, 20, 87, 2, 255, 255, 84, 70, 1, 50, 73, 17, 255, 5, 255, 27, 3, 255, 29, 67, 255, 83, 28, 66, 255, 255, 16, 15, 255, 77, 80, 22, 19, 52, 255, 86, 69, 75, 10, 89, 71, 255, 88, 82, 61, 81, 63, 23, 255, 4, 65, 76, 255, 255, 255, 255, 255, 24, 255, 255, 25, 78, 9, 255, 56, 12, 64, 60, 255, 255, 255, 255, 255, 11, 255, 255, 255, 255, 26, 255, 51, 255, 255, 57, 55, 90, 132, 110, 126, 124, 95, 116, 101, 111, 255, 255, 121, 131, 103, 130, 255, 102, 107, 120, 96, 106, 140, 141, 142, 109, 92, 113, 255, 143, 115, 122, 138, 255, 108, 134, 133, 98, 255, 112, 137, 136, 94, 91, 255, 93, 104, 100, 135, 114, 125, 97, 119, 105, 255, 144, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 150, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 154, 255, 255, 255, 255, 255, 145, 255, 147, 255, 149, 146, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 151, 255, 255, 255, 255, 255, 255, 255, 255, 148, 153, 255, 255, 255, 255, 152, 255, 255, 255, 255, 255 };
-	// unsigned char opcode_map[255] = { 255, 2, 23, 81, 255, 5, 55, 26, 67, 16, 83, 62, 255, 56, 71, 255, 255, 85, 80, 255, 24, 255, 84, 89, 1, 255, 255, 255, 63, 255, 255, 255, 255, 255, 255, 52, 65, 25, 86, 255, 82, 255, 51, 255, 70, 72, 68, 78, 87, 11, 50, 255, 66, 69, 255, 75, 60, 73, 22, 76, 255, 255, 27, 79, 57, 28, 4, 255, 77, 12, 255, 255, 64, 255, 19, 255, 17, 10, 255, 255, 15, 59, 255, 3, 61, 88, 255, 9, 20, 29, 90, 105, 107, 255, 93, 124, 255, 125, 255, 255, 113, 111, 91, 98, 126, 143, 133, 104, 108, 136, 119, 138, 130, 255, 102, 101, 92, 114, 255, 121, 135, 137, 94, 115, 255, 131, 255, 106, 97, 112, 116, 110, 103, 255, 255, 141, 142, 109, 255, 100, 95, 255, 132, 96, 144, 255, 150, 255, 255, 255, 146, 255, 255, 255, 255, 255, 255, 255, 255, 255, 151, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 161, 255, 147, 255, 255, 255, 155, 255, 255, 255, 255, 255, 255, 149, 255, 255, 255, 255, 255, 153, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 157, 148, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 160, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 145, 255, 154, 255, 255, 156, 255, 255 };
-
-        char *str;
-        unsigned char *buf;
-        Py_ssize_t count;
-        PyObject *co_code_new = NULL;
-
-        // printf("[^] Offset to co_code is %lu\n", offsetof(PyCodeObjectNew, co_code));
-        PyArg_Parse(co->co_code, "y#", &str, &count);
-        buf = (unsigned char *)malloc(count);
-        memcpy(buf, str, count);
-        int z = 0;
-        while (z < count) {
-            unsigned char new_code = opcode_map[buf[z]];
-            buf[z] = new_code;
-            if (new_code == 255) {
-                printf("Weird mapping: %u -> %u, next: %u, count: %ld!\n", (unsigned char)str[z], new_code, (unsigned char)str[z+1], count);
-            }
-            if (str[z] >= 255)
-                printf("OOB access!");
-            /* if (new_code >= 90) // what is this stuff? HAVE_ARGUMENT. Disassemble frame_setlineno to find this value.
-                z += 2;
-            else
-                z += 1; */
-	    z += 2;
-        }
-        co_code_new = Py_BuildValue("y#", buf, count);
         W_TYPE(TYPE_CODE, p);
+	//printf("co->co_argcount offset = %d\n", offsetof(PyCodeObjectNew, co_argcount));
         w_long(co->co_argcount, p);
+        w_long(co->co_posonlyargcount, p);
         w_long(co->co_kwonlyargcount, p);
         w_long(co->co_nlocals, p);
         w_long(co->co_stacksize, p);
         w_long(co->co_flags, p);
-        // w_object(co->co_code, p);
-        w_object(co_code_new, p);
+	int offset = offsetof(PyCodeObjectNew, co_code);
+	//printf("Dumping co->co_code (offset=%d), type: %s\n", offset, Py_TYPE(co->co_code)->tp_name);
+        w_object(co->co_code, p);
+	//puts(">> Done");
         w_object(co->co_consts, p);
         w_object(co->co_names, p);
         w_object(co->co_varnames, p);
@@ -780,7 +647,7 @@ PyMarshal_WriteLongToFile(long x, FILE *fp, int version)
 }
 
 void
-PyMarshal_WriteObjectToFileUs(PyObject *x, FILE *fp, int version)
+PyMarshal_WriteObjectToFile(PyObject *x, FILE *fp, int version)
 {
     char buf[BUFSIZ];
     WFILE wf;
@@ -897,7 +764,7 @@ r_byte(RFILE *p)
     else {
         const char *ptr = r_string(1, p);
         if (ptr != NULL)
-            c = *(unsigned char *) ptr;
+            c = *(const unsigned char *) ptr;
     }
     return c;
 }
@@ -1024,6 +891,38 @@ r_PyLong(RFILE *p)
     PyErr_SetString(PyExc_ValueError,
                     "bad marshal data (digit out of range in long)");
     return NULL;
+}
+
+static double
+r_float_bin(RFILE *p)
+{
+    const unsigned char *buf = (const unsigned char *) r_string(8, p);
+    if (buf == NULL)
+        return -1;
+    return _PyFloat_Unpack8(buf, 1);
+}
+
+/* Issue #33720: Disable inlining for reducing the C stack consumption
+   on PGO builds. */
+_Py_NO_INLINE static double
+r_float_str(RFILE *p)
+{
+    int n;
+    char buf[256];
+    const char *ptr;
+    n = r_byte(p);
+    if (n == EOF) {
+        PyErr_SetString(PyExc_EOFError,
+            "EOF read where object expected");
+        return -1;
+    }
+    ptr = r_string(n, p);
+    if (ptr == NULL) {
+        return -1;
+    }
+    memcpy(buf, ptr, n);
+    buf[n] = '\0';
+    return PyOS_string_to_double(buf, NULL, NULL);
 }
 
 /* allocate the reflist index for a new object. Return -1 on failure */
@@ -1162,36 +1061,17 @@ r_object(RFILE *p)
 
     case TYPE_FLOAT:
         {
-            char buf[256];
-            const char *ptr;
-            double dx;
-            n = r_byte(p);
-            if (n == EOF) {
-                PyErr_SetString(PyExc_EOFError,
-                    "EOF read where object expected");
+            double x = r_float_str(p);
+            if (x == -1.0 && PyErr_Occurred())
                 break;
-            }
-            ptr = r_string(n, p);
-            if (ptr == NULL)
-                break;
-            memcpy(buf, ptr, n);
-            buf[n] = '\0';
-            dx = PyOS_string_to_double(buf, NULL, NULL);
-            if (dx == -1.0 && PyErr_Occurred())
-                break;
-            retval = PyFloat_FromDouble(dx);
+            retval = PyFloat_FromDouble(x);
             R_REF(retval);
             break;
         }
 
     case TYPE_BINARY_FLOAT:
         {
-            const unsigned char *buf;
-            double x;
-            buf = (const unsigned char *) r_string(8, p);
-            if (buf == NULL)
-                break;
-            x = _PyFloat_Unpack8(buf, 1);
+            double x = r_float_bin(p);
             if (x == -1.0 && PyErr_Occurred())
                 break;
             retval = PyFloat_FromDouble(x);
@@ -1201,35 +1081,11 @@ r_object(RFILE *p)
 
     case TYPE_COMPLEX:
         {
-            char buf[256];
-            const char *ptr;
             Py_complex c;
-            n = r_byte(p);
-            if (n == EOF) {
-                PyErr_SetString(PyExc_EOFError,
-                    "EOF read where object expected");
-                break;
-            }
-            ptr = r_string(n, p);
-            if (ptr == NULL)
-                break;
-            memcpy(buf, ptr, n);
-            buf[n] = '\0';
-            c.real = PyOS_string_to_double(buf, NULL, NULL);
+            c.real = r_float_str(p);
             if (c.real == -1.0 && PyErr_Occurred())
                 break;
-            n = r_byte(p);
-            if (n == EOF) {
-                PyErr_SetString(PyExc_EOFError,
-                    "EOF read where object expected");
-                break;
-            }
-            ptr = r_string(n, p);
-            if (ptr == NULL)
-                break;
-            memcpy(buf, ptr, n);
-            buf[n] = '\0';
-            c.imag = PyOS_string_to_double(buf, NULL, NULL);
+            c.imag = r_float_str(p);
             if (c.imag == -1.0 && PyErr_Occurred())
                 break;
             retval = PyComplex_FromCComplex(c);
@@ -1239,18 +1095,11 @@ r_object(RFILE *p)
 
     case TYPE_BINARY_COMPLEX:
         {
-            const unsigned char *buf;
             Py_complex c;
-            buf = (const unsigned char *) r_string(8, p);
-            if (buf == NULL)
-                break;
-            c.real = _PyFloat_Unpack8(buf, 1);
+            c.real = r_float_bin(p);
             if (c.real == -1.0 && PyErr_Occurred())
                 break;
-            buf = (const unsigned char *) r_string(8, p);
-            if (buf == NULL)
-                break;
-            c.imag = _PyFloat_Unpack8(buf, 1);
+            c.imag = r_float_bin(p);
             if (c.imag == -1.0 && PyErr_Occurred())
                 break;
             retval = PyComplex_FromCComplex(c);
@@ -1504,6 +1353,7 @@ r_object(RFILE *p)
     case TYPE_CODE:
         {
             int argcount;
+            int posonlyargcount;
             int kwonlyargcount;
             int nlocals;
             int stacksize;
@@ -1529,6 +1379,10 @@ r_object(RFILE *p)
             argcount = (int)r_long(p);
             if (PyErr_Occurred())
                 goto code_error;
+            posonlyargcount = (int)r_long(p);
+            if (PyErr_Occurred()) {
+                goto code_error;
+            }
             kwonlyargcount = (int)r_long(p);
             if (PyErr_Occurred())
                 goto code_error;
@@ -1572,8 +1426,14 @@ r_object(RFILE *p)
             if (lnotab == NULL)
                 goto code_error;
 
-            v = (PyObject *) PyCode_New(
-                            argcount, kwonlyargcount,
+            if (PySys_Audit("code.__new__", "OOOiiiiii",
+                            code, filename, name, argcount, posonlyargcount,
+                            kwonlyargcount, nlocals, stacksize, flags) < 0) {
+                goto code_error;
+            }
+
+            v = (PyObject *) PyCode_NewWithPosOnlyArgs(
+                            argcount, posonlyargcount, kwonlyargcount,
                             nlocals, stacksize, flags,
                             code, consts, names, varnames,
                             freevars, cellvars, filename, name,
@@ -1760,6 +1620,9 @@ PyMarshal_WriteObjectToStringUs(PyObject *x, int version)
     WFILE wf;
 
     memset(&wf, 0, sizeof(wf));
+
+    puts("> PyMarshal_WRiteObjectToString");
+
     wf.str = PyBytes_FromStringAndSize((char *)NULL, 50);
     if (wf.str == NULL)
         return NULL;
@@ -1912,6 +1775,7 @@ static PyObject *
 marshal_dumps_impl(PyObject *module, PyObject *value, int version)
 /*[clinic end generated code: output=9c200f98d7256cad input=a2139ea8608e9b27]*/
 {
+    puts("> marshal_dumps_impl");
     return PyMarshal_WriteObjectToStringUs(value, version);
 }
 
@@ -1989,7 +1853,7 @@ loads() -- read value from a bytes-like object");
 
 static struct PyModuleDef marshalmodule = {
     PyModuleDef_HEAD_INIT,
-    "marshal3",  // renamed
+    "marshal3",
     module_doc,
     0,
     marshal_methods,
@@ -2000,12 +1864,14 @@ static struct PyModuleDef marshalmodule = {
 };
 
 PyMODINIT_FUNC
-// PyMarshal_Init(void)
 PyInit_marshal3(void)
 {
     PyObject *mod = PyModule_Create(&marshalmodule);
     if (mod == NULL)
         return NULL;
-    PyModule_AddIntConstant(mod, "version", Py_MARSHAL_VERSION);
+    if (PyModule_AddIntConstant(mod, "version", Py_MARSHAL_VERSION) < 0) {
+        Py_DECREF(mod);
+        return NULL;
+    }
     return mod;
 }
